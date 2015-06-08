@@ -1,0 +1,8 @@
+export('cluster.snp')
+export('multisplit')
+export('test.hierarchy')
+export('compute.r2')
+import('fastcluster')
+import('glmnet')
+import('hlr')
+import('fmsb')

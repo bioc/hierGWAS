@@ -1,0 +1,404 @@
+%&pdflatex
+%\VignetteIndexEntry{User manual for R-Package hierGWAS}
+%\VignetteDepends{hierGWAS}
+
+\documentclass[a4paper]{article}
+
+\usepackage[left=3cm,right=3cm,top=3cm,bottom=4cm]{geometry}
+\parindent0ex
+\parskip1ex
+
+\usepackage{Sweave}
+\usepackage{amsmath, amssymb}
+\usepackage[notlof,nottoc,notlot]{tocbibind}
+
+\begin{document}
+\SweaveOpts{concordance=TRUE}
+
+\SweaveOpts{prefix.string=plot, eps = FALSE, pdf = TRUE}
+
+
+\title{A tutorial for the Bioconductor package \texttt{hierGWAS}}
+\author{Laura Buzdugan}
+
+\maketitle
+
+\tableofcontents
+
+\section{Introduction}
+
+\texttt{hierGWAS} tests statistical significance in Genome Wide Association
+Studies (GWAS), using a joint model of all SNPs. This leads to a stronger
+interpretation of single, or groups of SNPs compared to the marginal approach.
+The method provides an asymptotic control of the Family Wise Error Rate (FWER),
+as well as an automatic, data-driven refinement of the SNP clusters to smaller
+groups or single markers \cite{buz15}.
+
+The method can be used for case-control studies, as well as for continuous trait
+studies. Aditionally, one can control for one or more covariates.
+
+\subsection{Model}
+
+The two components of the model are the genotype $X$ and the phenotype $Y$. $Y$
+is a vector of length $n$, where $n$ represents the number of samples (e.g. subjects).
+$Y_i$, the phenotype corresponding to person $i$, can encode either the disease
+status (0 or 1), or the continuous value of a trait. $X$ is a matrix of size $n \times p$,
+where $p$ is the number of SNPs to be analyzed. $X_{i,j}$ encodes the number of minor
+alleles of the jth SNP for person $i$, thus it can take values ${0,1,2}$.
+
+The genotype-phenotype relationship is expressed using a generalized linear
+model \cite{mccu-neld89}. If the phenotype is continuous, this translates to a linear model:
+$$ Y_i = \beta_0 + \sum_{j=1}^p \beta_j X_{i,j} + \epsilon_i  \quad
+(i=1,..,n) $$
+where $\epsilon_i,..,\epsilon_n$ are independent and identically distributed error
+terms with expectation 0.
+If the phenotype is binary, representing case (=1) or control (=0) status, we
+use a logistic regression model:
+
+$$ \pi_i = P(Y_i = 1|X_i, \beta) = \frac{exp(\eta_i)}{1+exp(\eta_i)}
+\quad (i=1,..,n)$$
+$$ \ln \frac {\pi_i}{1-\pi_i} = \eta_i = \beta_0 + \sum_{j=1}^{p} \beta_j
+X_{i,j}$$
+where $\pi$ represents the probability of a subject having case status, given
+its SNPs $X_i$.
+
+In both models $\beta_0$ represents the intercept and $\beta_j$ are the
+(logistic) regression coefficients which quantify the association between the
+response and SNP $j$.
+
+Our goal is to assess the statistical significance of single SNPs, or groups of
+correlated SNPs, with respect to the phenotype. This has to be made precise:
+we aim for p-values, adjusted for
+multiple testing, when testing the hypotheses: for single SNP $j$
+\begin{eqnarray}\label{indiv-hyp}
+H_{0,j}:\ \beta_j = 0\ \mbox{versus}\ H_{A,j}:\ \beta_j \neq 0,
+\end{eqnarray}
+or for a group $G \subseteq \{1,\ldots ,p\}$ of SNPs
+\begin{eqnarray}\label{group-hyp}
+& &H_{0,G}:\ \beta_j = 0\ \mbox{for all}\ j \in G\nonumber\\
+&\mbox{versus}& H_{A,G}:\
+\mbox{at least for one}\ j \in G\ \mbox{we have that}\ \beta_j \neq 0.
+\end{eqnarray}
+The obtained p-values are with respect to a regression model and hence,
+they share the interpretation  with the regression parameters described
+above.
+
+\subsection{Workflow}
+
+The entire procedure for hierarchical inference is schematically summarized
+in Figure \ref{fig1}. Preprocessing refers to the steps taken to clean the data,
+by removing SNPs, samples. This should be performed before starting the analysis.
+The three stages of the procedure are  described in detail in sections
+\ref{subsec.clustering}, \ref{subsec.pvalueconstr} and \ref{subsec.testing}.
+
+\begin{figure}[!htb]
+  \centering
+    \includegraphics[width=1\linewidth]{flowchart2.pdf}
+    \caption{Flowchart of the method.
+}\label{fig1}
+\end{figure}
+
+\section{Preparing Data}
+\subsection{Data Formats}
+
+The two required variables in order to perform the analysis are the phenotype
+and genotype data. The genotype data, \texttt{x}, should be a matrix of size
+\texttt{n x p}, where \texttt{n} represents the number of samples (subjects),
+and \texttt{p} the number of SNPs. The SNPs must be coded numerically (0,1,2
+copies of a specific allele). The phenotype data, \texttt{y} should be a
+vector of length \texttt{n}, and it should have either binary (0,1), or
+continuous valued elements.
+
+If one is working with \texttt{PLINK}, these two data structures can easily be
+created in \texttt{R} after the  \texttt{PLINK} data file is read.
+
+There are two optional input variables. \texttt{SNP\_index}, a vector of length
+\texttt{p}, assigns a label to each SNP. These could represent chromosomes,
+or some other grouping of the SNPs. \texttt{covar}, either of vector of length
+\texttt{n}, or a matrix of size \texttt{n x c}, stores the covariates one wishes
+to control for.
+
+\subsection{Missingness}
+
+In general, even after preprocessing, SNP data contains missing values. While
+this is not an issue in a marginal analysis, where missing data are omitted,
+multivariate methods such as \texttt{lm}, \texttt{glm}, do not allow for data
+with missingness.
+
+Thus, one must impute these missing values before starting the analysis.
+There are several different methods to do this, either in \texttt{R}, after the
+data is imported, or before. If done inside \texttt{R}, one can choose from
+packages such as \texttt{mice}, \texttt{mi} or \texttt{missforest}, which
+perform multiple imputation.
+
+If one wishes to use methods tailored for GWAS data, software such as
+\texttt{SHAPEIT} \cite{del13} can be employed. Although the goal of \texttt{SHAPEIT}
+is to impute additional SNPs that were not genotyped, it will also impute the
+missing values for the genotyped SNPs. This is done in the process of phasing
+the chromosomes, when missing values are already imputed.
+
+\subsection{Toy Data}
+
+Given the usual size of GWAS data, performing the analysis on a real dataset
+with $> 10^5$ SNPs is computationally expensive. For this reason, in order to
+illustrate the method, we generated a small toy dataset using \texttt{PLINK}.
+
+The data contains $ n = 500$ samples (250 cases, 250 controls) and $p = 1000$
+SNPs. Out of these $1000$ SNPs, $990$ have no association with the phenotype,
+while the remaining $10$ have a population odds ratio of 2. The SNPs were binned
+into different allele frequency ranges, to create a more realistic example.
+
+The SNPs are separated into two chromosomes: the first half of the SNPs are from
+chromosome $1$, while the second half from chromosome $2$. Finally, there are
+two control variables: sex (0 for males, 1 for females) and age
+(between 18 and 65).
+
+The data structure, entitled simGWAS, has the following components:
+\begin{itemize}
+    \item SNP.1: The first SNP, of dimension $500 \times 1$. Each
+    row represents a subject.
+    \item ...
+    \item SNP.1000: The last SNP, of dimension $500 \times 1$. Each
+    row represents a subject.
+    \item y: The response vector. It can be continuous or discrete.
+    \item sex: The first covariate, represeting the sex of the subjects:
+    0 for men and 1 for women.
+    \item age: The second covariate, represeting the age of the subjects.
+\end{itemize}
+
+\section{Data Analysis}
+
+The \texttt{hierGWAS} R-package contains the following functions:
+\begin{center}
+    \begin{tabular}{c|l}
+        Function & Description \\
+        \hline
+        \texttt{cluster.snp} & clusters the SNP hierarchically  \\
+        \texttt{multisplit} & performs the multiple sample splitting and
+        LASSO regression \\
+        \texttt{test.hierarchy} & hierarchically tests the SNPs\\
+        \texttt{compute.r2} & computes the $r^2$ for a group of SNPs\\
+    \end{tabular}
+\end{center}
+
+The first three functions perform the clustering, regression and testing. The
+outputs of \texttt{cluster.snp} and \texttt{multisplit} are required as inputs
+for \texttt{test.hierarchy}, so these two functions need to be executed before
+the third one. On the other hand, \texttt{cluster.snp} and \texttt{multisplit}
+are independent, so they can be run in any order. In order to speed up  the
+computations, one should consider running them in parallel if the resoures allow
+it. The last function, \texttt{compute.r2}, allows the user to calculate the variance
+explained by any group of SNPs of arbitrary size.
+
+<<data>>=
+library(hierGWAS)
+data(simGWAS)
+sim.geno <- data.matrix(simGWAS[,1:1000])
+sim.pheno <- simGWAS$y
+sim.covar <- cbind(simGWAS$sex,simGWAS$age)
+@
+
+In the following we will describe each of the four functions, and show how they
+should be used.
+
+\subsection{Hierarchical Clustering of SNPs}\label{subsec.clustering}
+
+The first step is to hierarchically cluster the SNPs. \texttt{cluster.snp} uses the
+\texttt{hclust} function from R, but provides a different distance measure.
+Hierarchical clustering is a computationally intensive procedure, and for large
+datasets it becomes unfeasible. For this reason, one can divide the SNPs into
+non-overlapping sets, and cluster each set separately. One natural division
+is the grouping of SNPs into distinct chromosomes, but the user is free to
+define alternative divisions.
+
+In the case of our toy data, the SNPs belong to either chromosome 1 or 2, so
+we cluster them into two distinct hierarchies, by specifying the indices of the
+SNPs which come from either chromosome 1 or 2. Note that in this case, due to
+the small size of the data, it would be equally feasible to cluster all the SNPs
+into a single tree.
+
+<<cluster SNPs>>=
+# cluster SNPs in chromosome 1
+SNPindex.chrom1 <- seq(1,500)
+dendr.chrom1 <- cluster.snp(sim.geno,SNP_index = SNPindex.chrom1)
+
+# cluster SNPs in chromosome 2
+SNPindex.chrom2 <- seq(501,1000)
+dendr.chrom2 <- cluster.snp(sim.geno,SNP_index = SNPindex.chrom2)
+@
+
+The inputs for \texttt{cluster.snp} are \texttt{x}, the genotype matrix, respectively
+\texttt{SNPindex.chrom1} and \texttt{SNPindex.chrom2}, the indices of SNPs in chromosomes
+1 and 2. \texttt{x} was used to compute the dissimilarity measure between the SNPs.
+
+The default dissimilarity measure between two SNPs is \texttt{1 - LD} (Linkage
+Disequilibrium), where \texttt{LD} is defined as the square of the Pearson
+correlation coefficient. If the user wishes to use a different dissimilarity
+measure, this will then be the sole input to \texttt{cluster.snp}. For example,
+if we were to use a different measure, the input would have been only the dissimilarity
+matrix. Thus, for our toy data, we would have had to provide either two $500 \times 500$
+matrices, one per chromosome, and execute the function separately for each chromosome,
+or give one $1000 \times 1000$ dissimilarity matrix for the entire dataset.
+
+Finally, the default agglomeration method is average linkage, however the user
+can choose between multiple methods implemented by \texttt{hclust}.
+
+For large datasets, one can speed up the analysis by running the clustering of separate
+chromosomes in parallel. This can be done using the \texttt{parallel} \texttt{R}
+package.
+
+\subsection{Multiple Sample Splitting and LASSO Regression}\label{subsec.pvalueconstr}
+
+The second step, which can be run independently from the first one, is to do
+repeated LASSO regressions on random sample splits. This part of the analysis is
+implemented in the \texttt{multisplit} function. This function takes as input
+the genotype and phenotype data, as well as one or more covariates.
+
+The procedure is as follows:
+\begin{enumerate}
+  \item Randomly split the sample into two equal parts: $I_1$ and $I_2$
+  \item Do LASSO selection on the data from $I_1$. Save the $n/6$ selected SNPs.
+  \item Repeat steps 1-2 $B$ times. The default value for $B$ is 50, but a
+  different number of random splits can be specified.
+\end{enumerate}
+
+The output of this function is a list with two components:
+\begin{itemize}
+  \item out.sample: a matrix of size $B \times [n/2]$ containing the second
+  subsample ($I_2$) for each split.
+  \item sel.coeff: a matrix  of size $B \times [n/6]$ containing the
+  selected variables in each split.
+\end{itemize}
+
+
+
+For our example, the code is the following:
+
+<<multi split>>=
+res.multisplit <- multisplit(sim.geno,sim.pheno,covar = sim.covar)
+# the matrix of selected coefficients for each sample split
+show(res.multisplit$sel.coeff[1:10,1:10])
+# the samples which will be used for testing
+show(res.multisplit$out.sample[1:10,1:10])
+@
+\subsection{Hierarchical Testing of SNPs}\label{subsec.testing}
+
+The last step of the procedure is the hierarchical testing of SNPs. We describe the
+steps for the toy data:
+\begin{enumerate}
+\item Test the global hypothesis $H_{0,G_{\mathrm{global}}}$ where
+  $G_{\mathrm{global}} = \{1,\ldots ,p\}$: that is, we test whether all
+  SNPs have corresponding (generalized) regression coefficients equal to zero or
+  alternatively, whether there is at least one SNP which has a non-zero
+  regression coefficient. If we can reject this global hypothesis, we go to
+  the next step.
+\item Test the hypotheses $H_{0,G_1},\ldots ,H_{0,G_{2}}$ where $G_k$
+  contains all the SNPs from chromosome $k$. For those chromosomes $k$
+  where $H_{0,G_k}$ can be rejected, we go to the next step.
+\item Test hierarchically the groups $G$ which correspond to chromosomes
+  $k$ where $H_{0,G_k}$ is rejected: first consider the largest groups and
+  then proceed hierarchically (down the cluster tree) to smaller groups
+  until a hypothesis $H_{0,G}$ can not be rejected anymore or the level of
+  single SNPs is reached.
+\item The output is a collection of groups $G_{\mathrm{final},1},\ldots
+  ,G_{\mathrm{final},m}$ where $H_{0,G_{\mathrm{final},k}}$ is rejected
+  ($k=1,\ldots ,m$) and all subgroups of $G_{\mathrm{final},k}$
+  ($k=1,\ldots ,m$) downwards in the cluster tree are not significant anymore.
+\end{enumerate}
+
+With this procedure, one needs to do the hypothesis tests in such a
+hierarchical procedure at
+certain levels to guarantee that the familywise error, i.e., the
+probability for at least one false rejection of the hypotheses among the
+multiple tests, is smaller or equal to $\alpha$ for some pre-spcified $0 <
+\alpha < 1$, e.g., $\alpha = 0.05$.
+
+For our dataset, the \texttt{test.hierarchy} function takes as input the
+following variables:
+\begin{itemize}
+  \item x: the genotype matrix
+  \item y: the phenotype vector
+  \item dendr: the hierarchical tree (of one of the chromosomes)
+  \item res.multisplit: the output of the LASSO regression
+  \item SNP\_index: the indices of SNPs (in one of the chromosomes)
+  \item global.test: specifies wether the global null hypothesis should be tested
+  \item verbose: reports information on progress
+\end{itemize}
+
+We then run the function for both chromosomes 1 and 2.
+
+<<hierarchical testing>>=
+result.chrom1 <- test.hierarchy(sim.geno, sim.pheno, dendr.chrom1, res.multisplit,
+                                covar = sim.covar, SNP_index = SNPindex.chrom1)
+result.chrom2 <- test.hierarchy(sim.geno, sim.pheno, dendr.chrom1, res.multisplit,
+                                covar = sim.covar, SNP_index = SNPindex.chrom2,
+                                global.test = FALSE, verbose = FALSE)
+show(result.chrom2)
+@
+The ouptput of \texttt{test.hierarchy} is a list containing groups or individually
+significant SNPs, as well as their p-values.
+
+Based on the indices of the significant SNPs, one can go back to the original
+data and retrieve the SNP rsIDs.
+
+Due to the fact that the procedure begins with testing the globall null
+$H_{0,G_{\mathrm{global}}}$, if we subdivide the SNPs into chromosomes or other
+groups, we will end up testing the global null for each division. In order to save
+time, once the global null has been rejected (e.g. for chromosome 1), when testing
+chromosome 2, the \texttt{test.global} parameter should be set to \texttt{FALSE},
+to avoid retesting the null.
+
+The final parameter of the function, \texttt{verbose}, offers the user updates about
+the progress of the algorithm. By default this parameter is set to \texttt{TRUE},
+but the messages can be suppressed by setting it to \texttt{FALSE}.
+
+\subsection{Computation of explained variance}
+
+One has the option of calculating the variance explained by any group of SNPs, using
+the \texttt{compute.r2} function. The inputs are:
+\begin{itemize}
+  \item x: the genotype matrix
+  \item y: the phenotype vector
+  \item res.multisplit: the output of the LASSO regression
+  \item covar: the matrix of covariates
+  \item SNP\_index: the indices of SNPs whose $r^2$ will be computed
+\end{itemize}
+
+The $r^2$ of a group is computed in the following way:
+\begin{enumerate}
+  \item Intersect the group indices with those of the selected coefficients in split $b$
+  \item Compute the $r^2$ of the model with SNPs from point 1.
+  \item Repeat steps 1-2 $B$ times. The final $r^2$ is the mean of the $B$ $r^2$
+  values.
+\end{enumerate}
+
+For our toy data, given that we know a-priori that the last 10 SNPs are the ones
+that increase the risk of disease, we chose to compute the variance explained jointly
+by them. This is done using the following command:
+
+<<r2 computation>>=
+SNP_index <- seq(991,1000)
+res.r2 <- compute.r2(sim.geno, sim.pheno, res.multisplit, covar = sim.covar, SNP_index = SNP_index)
+show(res.r2)
+@
+
+
+\section{Session Info}
+
+<< session info>>=
+sessionInfo()
+@
+
+\begin{thebibliography}{50}
+\bibitem{buz15}
+L. Buzdugan et al. \textsl{Assessing statistical significance in predictive
+                           genome-wide association studies}. (unpublished).
+\bibitem{mccu-neld89}
+    P. McCullagh and J.A. Nelder. \textsl{Generalized Linear Models}. Chapman \& Hall, London, 1989.
+\bibitem{del13}
+    O. Delaneau et al. \textsl{Improved whole-chromosome phasing for disease
+    and population genetic studies}. Nature Methods, 10(1):5-6, 2013.
+\end{thebibliography}
+
+\end{document}
+
