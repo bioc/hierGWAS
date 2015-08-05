@@ -1,4 +1,6 @@
-CHANGES IN VERSION 0.99.0 (June 2015)
+CHANGES IN VERSION 0.99.3 (August 2015)
 ------------------------
 
-* Package submitted to Bioconductor.
+* Removed hlr dependency and added the MEL function
+* Fixed computation of r2 when the SNP_index = NULL
+

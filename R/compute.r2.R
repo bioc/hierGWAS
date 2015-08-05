@@ -60,7 +60,11 @@ compute.r2 <- function(x, y, res.multisplit, covar = NULL, SNP_index = NULL) {
   for (b in 1:B) {
     scl <- lasso.coeff.matrix[b,]
     scl <- scl[!is.na(scl)]
-    common.SNP_index <- intersect(SNP_index,scl)
+    if (is.null(SNP_index)) {
+        common.SNP_index <- scl
+    } else {
+        common.SNP_index <- intersect(SNP_index,scl)   
+    }
     if (length(common.SNP_index) == 0) {
       ret.vector[b] <- 0
     } else {

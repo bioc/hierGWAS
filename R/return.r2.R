@@ -14,7 +14,7 @@ return.r2 <- function (x, y, covar = NULL) {
     } else {
       design.mat <- data.matrix(cbind(covar, x))
     }
-    r2 <- NagelkerkeR2(glm(y~design.mat, family = binomial(link="logit")))$R2
+    r2 <- NagelkerkeR2(MEL(design.mat, y, maxit = 100)$outMEL)$R2
   } else {
     if (is.null(covar)) {
       design.mat <- x
